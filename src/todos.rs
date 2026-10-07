@@ -871,6 +871,14 @@ pub fn defer_todo_to(
     if dest_path == path {
         return Err(VaultError::Io("cannot defer onto the same note".into()));
     }
+    // From the inbox the destination is today's note. If this creates it,
+    // roll the previous day's open todos over first, as the first `add` of
+    // the day would; otherwise the rollover never runs for today. This
+    // happens before the undo record so undo only reverts the move and never
+    // deletes a note holding todos already removed from the previous day.
+    if vault.inbox {
+        ensure_note(&dest_vault, &config, &dest_path, next_date, heading)?;
+    }
     let dest_existed = dest_path.exists();
     let dest_before: Option<String> =
         if dest_existed {
@@ -1950,6 +1958,35 @@ mod tests {
             fs::read_to_string(&note).unwrap(),
             "# Day\n\n## Tasks\n\n- [ ] existing\n- [ ] move me\n  - [ ] child\n"
         );
+        let _ = fs::remove_dir_all(inbox.root());
+    }
+
+    #[test]
+    fn inbox_defer_into_new_today_note_rolls_over_previous_day() {
+        let (vault, date, note) = vault_with("");
+        fs::remove_file(&note).unwrap();
+        let yesterday = vault.root().join("Daily/2026-08-19.md");
+        fs::write(&yesterday, "- [ ] leftover\n- [x] finished\n").unwrap();
+        let inbox = vault.with_inbox(true);
+        let path = inbox.root().join(crate::config::INBOX_NOTE);
+        fs::write(&path, "- [ ] idea\n").unwrap();
+        let undo = unique_temp("inbox-defer-undo");
+        defer_todo_to(&inbox, date, 1, Some("idea"), false, None, Some(&undo)).unwrap();
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "# 2026-08-20\n- [ ] leftover\n- [ ] idea\n"
+        );
+        assert_eq!(fs::read_to_string(&yesterday).unwrap(), "- [x] finished\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+
+        // Undo reverts only the move; the rolled-over todo stays in today.
+        crate::undo::undo_last_from(&inbox, &undo).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "- [ ] idea\n");
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "# 2026-08-20\n- [ ] leftover\n"
+        );
+        let _ = fs::remove_file(&undo);
         let _ = fs::remove_dir_all(inbox.root());
     }
 
