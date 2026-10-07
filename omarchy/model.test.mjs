@@ -303,4 +303,21 @@ test("emptyMessage", () => {
   );
 });
 
+test("parseLine flags inbox snapshots", () => {
+  const inbox = Model.parseLine(
+    JSON.stringify({ state: "ok", path: "/vault/Inbox.md", exists: true, inbox: true, todos: [] }),
+  );
+  assert.equal(inbox.inbox, true);
+  assert.equal(inbox.date, "");
+  const day = Model.parseLine(JSON.stringify({ state: "ok", date: "2026-08-20", todos: [] }));
+  assert.equal(day.inbox, false);
+  assert.equal(Model.parseLine('{"state":"error","error":"x"}').inbox, false);
+});
+
+test("inbox messages for a missing Inbox.md", () => {
+  const status = { state: "ok", exists: false, inbox: true, todos: [], templateName: "T" };
+  assert.equal(Model.metaLine(status), "No inbox note yet");
+  assert.match(Model.emptyMessage(status, false), /Inbox\.md/);
+});
+
 console.log("All Model.js tests passed.");

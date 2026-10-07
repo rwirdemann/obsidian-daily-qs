@@ -88,6 +88,7 @@ mod tests {
             obsidian_uri: None,
             carry_over_count: Some(carry),
             is_today: Some(true),
+            inbox: None,
             template_name: None,
             created_from_template: None,
             error_code: None,

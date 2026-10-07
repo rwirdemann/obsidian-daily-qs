@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Inbox: an *Inbox* cell left of the week strip shows the vault's `Inbox.md`
+  (vault root) with the same check / add / edit / delete / indent / undo
+  actions as a daily note. *Move to today* moves an inbox todo (with its
+  children) into today's daily note. The cell shows the inbox's open count.
+- Backend: global `--inbox` flag targets `Inbox.md` instead of a daily note;
+  `defer --inbox` moves the todo into the daily note for `--date` (default
+  today). Inbox snapshots carry `"inbox": true` and no `date`.
+
 ## [1.12.2] - 2026-10-03
 
 ### Fixed

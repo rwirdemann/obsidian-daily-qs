@@ -55,6 +55,12 @@ Panel {
   readonly property bool isToday: hasWatcher ? watcher.viewIsToday === true : true
   readonly property string templateName: hasWatcher ? String(watcher.viewTemplateName || "") : ""
   readonly property var weekDays: hasWatcher ? (watcher.weekDays || []) : []
+  readonly property bool inbox: hasWatcher ? watcher.viewInbox === true : false
+  // Day highlighted in the week strip; none while the inbox is shown.
+  readonly property string activeDate: root.inbox ? "" : root.date
+  readonly property int inboxOpenCount: hasWatcher ? Number(watcher.inboxOpenCount || 0) : 0
+  readonly property int inboxDoneCount: hasWatcher ? Number(watcher.inboxDoneCount || 0) : 0
+  readonly property bool inboxExists: hasWatcher ? watcher.inboxExists === true : false
 
   readonly property var status: ({
     state: root.statusState,
@@ -67,6 +73,7 @@ Panel {
     errorCode: root.errorCode,
     carryOverCount: root.carryOverCount,
     isToday: root.isToday,
+    inbox: root.inbox,
     templateName: root.templateName
   })
   readonly property bool vaultSetupError: Model.isVaultSetupError(status)
@@ -180,6 +187,12 @@ Panel {
     if (!hasWatcher || typeof watcher.goToDate !== "function") return
     root.cancelEdit()
     watcher.goToDate(dateStr)
+  }
+
+  function goToInbox() {
+    if (!hasWatcher || typeof watcher.goToInbox !== "function") return
+    root.cancelEdit()
+    watcher.goToInbox()
   }
 
   function carryOver() {
@@ -388,7 +401,7 @@ Panel {
           PanelHero {
             width: parent.width
             title: "Obsidian Daily"
-            meta: root.date !== "" ? root.date : "Daily note"
+            meta: root.inbox ? "Inbox" : (root.date !== "" ? root.date : "Daily note")
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -495,6 +508,67 @@ Panel {
               spacing: Style.space(4)
               visible: root.weekDays.length > 0
 
+              // Inbox cell: the vault's Inbox.md, left of the week.
+              CursorSurface {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Style.space(48)
+                foreground: root.foreground
+                accent: root.accent
+                hasCursor: false
+                current: root.inbox
+                bordered: true
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.goToInbox()
+                }
+
+                Column {
+                  anchors.centerIn: parent
+                  spacing: Style.space(3)
+
+                  Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "Inbox"
+                    textFormat: Text.PlainText
+                    color: root.inbox ? root.accent : root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: root.inbox
+                  }
+
+                  Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: root.inboxOpenCount > 0 ? String(root.inboxOpenCount) : "\u2013"
+                    textFormat: Text.PlainText
+                    color: root.inbox ? root.foreground : root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: root.inbox
+                  }
+
+                  Rectangle {
+                    id: inboxDot
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Style.space(6)
+                    height: Style.space(6)
+                    radius: width / 2
+                    readonly property bool hasOpen: root.inboxOpenCount > 0
+                    visible: hasOpen || (root.inboxExists && root.inboxDoneCount > 0)
+                    color: hasOpen ? (root.inbox ? root.accent : root.foreground) : "transparent"
+                    border.width: hasOpen ? 0 : Math.max(1, Style.space(0.5))
+                    border.color: root.inbox ? root.accent : root.foreground
+                  }
+
+                  Item {
+                    width: Style.space(6)
+                    height: Style.space(6)
+                    visible: !inboxDot.visible
+                  }
+                }
+              }
+
               Repeater {
                 model: root.weekDays
 
@@ -506,7 +580,7 @@ Panel {
                   foreground: root.foreground
                   accent: root.accent
                   hasCursor: false
-                  current: modelData.date === root.date
+                  current: modelData.date === root.activeDate
                   bordered: true
 
                   MouseArea {
@@ -526,7 +600,7 @@ Panel {
                       color: modelData.isToday ? root.accent : root.dim
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
-                      font.bold: modelData.date === root.date
+                      font.bold: modelData.date === root.activeDate
                     }
 
                     Text {
@@ -536,10 +610,10 @@ Panel {
                         return parts.length === 3 ? String(Number(parts[2])) : ""
                       }
                       textFormat: Text.PlainText
-                      color: modelData.date === root.date ? root.foreground : root.dim
+                      color: modelData.date === root.activeDate ? root.foreground : root.dim
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.bodySmall
-                      font.bold: modelData.date === root.date
+                      font.bold: modelData.date === root.activeDate
                     }
 
                     Rectangle {
@@ -553,9 +627,9 @@ Panel {
                       readonly property bool hasOpen: modelData.openCount > 0
                       readonly property bool hasDone: modelData.exists && modelData.doneCount > 0
                       visible: hasOpen || hasDone
-                      color: hasOpen ? (modelData.date === root.date ? root.accent : root.foreground) : "transparent"
+                      color: hasOpen ? (modelData.date === root.activeDate ? root.accent : root.foreground) : "transparent"
                       border.width: hasOpen ? 0 : Math.max(1, Style.space(0.5))
-                      border.color: modelData.date === root.date ? root.accent : root.foreground
+                      border.color: modelData.date === root.activeDate ? root.accent : root.foreground
                       opacity: modelData.exists ? 1.0 : 0.45
                     }
 
@@ -1004,7 +1078,7 @@ Panel {
 
             Repeater {
               model: [
-                { label: "Do tomorrow", action: "defer" },
+                { label: root.inbox ? "Move to today" : "Do tomorrow", action: "defer" },
                 { label: "Delete", action: "delete" }
               ]
 

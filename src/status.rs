@@ -49,6 +49,9 @@ pub struct Snapshot {
     pub carry_over_count: Option<usize>,
     #[serde(rename = "isToday", skip_serializing_if = "Option::is_none")]
     pub is_today: Option<bool>,
+    /// True for a snapshot of the inbox note (`--inbox`), which has no date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inbox: Option<bool>,
     /// Relative template path from daily-notes.json when configured.
     #[serde(rename = "templateName", skip_serializing_if = "Option::is_none")]
     pub template_name: Option<String>,
@@ -105,6 +108,7 @@ impl Snapshot {
             obsidian_uri: None,
             carry_over_count: None,
             is_today: None,
+            inbox: None,
             template_name: None,
             created_from_template: None,
             error_code: Some(code.into()),
@@ -126,6 +130,7 @@ impl Snapshot {
             obsidian_uri: None,
             carry_over_count: None,
             is_today: None,
+            inbox: None,
             template_name: None,
             created_from_template: None,
             error_code: None,

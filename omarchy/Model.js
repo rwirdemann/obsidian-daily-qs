@@ -31,6 +31,7 @@ function parseLine(line) {
       obsidianUri: "",
       carryOverCount: 0,
       isToday: false,
+      inbox: false,
       templateName: "",
       createdFromTemplate: false,
       errorCode: safeText(parsed.errorCode) || "io",
@@ -81,6 +82,7 @@ function parseLine(line) {
     obsidianUri: safeUri(parsed.obsidianUri),
     carryOverCount: carryOverCount,
     isToday: parsed.isToday === true,
+    inbox: parsed.inbox === true,
     templateName: safeText(parsed.templateName),
     createdFromTemplate: parsed.createdFromTemplate === true,
     errorCode: "",
@@ -197,6 +199,7 @@ function metaLine(status) {
   if (!status) return "";
   if (status.state === "error") return status.error || "Error";
   if (!status.exists) {
+    if (status.inbox) return "No inbox note yet";
     if (status.templateName)
       return "No daily note yet · template " + status.templateName;
     return "No daily note yet";
@@ -209,6 +212,7 @@ function emptyMessage(status, openOnly, query) {
   if (!status) return "Loading…";
   if (status.state === "error") return status.error || "Unable to read vault";
   if (!status.exists) {
+    if (status.inbox) return "No Inbox.md yet. Add a todo to create it.";
     if (status.templateName)
       return "No daily note for this day. Add a todo to create it from template "
         + status.templateName + ".";

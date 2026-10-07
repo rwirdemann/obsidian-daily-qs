@@ -18,7 +18,13 @@ pub struct Vault {
     /// `dailies/_archive/YYYY`) relative to the vault root, from the
     /// `--archive-folder` flag / `archiveFolder` bar setting.
     pub archive: Option<String>,
+    /// Target the vault's fixed inbox note (`Inbox.md` in the vault root)
+    /// instead of a daily note, from the `--inbox` flag.
+    pub inbox: bool,
 }
+
+/// File name of the inbox note in the vault root.
+pub const INBOX_NOTE: &str = "Inbox.md";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DailyNotesConfig {
@@ -134,6 +140,7 @@ impl Vault {
         Ok(Self {
             root,
             archive: None,
+            inbox: false,
         })
     }
 
@@ -270,6 +277,26 @@ impl Vault {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    /// The same vault targeting the inbox note instead of daily notes.
+    pub fn with_inbox(self, inbox: bool) -> Self {
+        Self { inbox, ..self }
+    }
+
+    /// The same vault targeting daily notes, for inbox operations that read
+    /// or write a daily note (e.g. moving an inbox todo to today).
+    pub fn daily(&self) -> Self {
+        Self {
+            inbox: false,
+            ..self.clone()
+        }
+    }
+
+    pub fn inbox_note_path(&self) -> Result<PathBuf, VaultError> {
+        let path = self.root.join(INBOX_NOTE);
+        ensure_under_root(&self.root, &path)?;
+        Ok(path)
+    }
 }
 
 /// Drop empty / `.` / `..` path segments so settings cannot escape the vault.
@@ -347,6 +374,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         assert_eq!(cfg.folder, "");
@@ -369,6 +397,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         assert_eq!(cfg.folder, "Daily");
@@ -397,6 +426,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         assert_eq!(cfg.folder, "outside");
@@ -434,6 +464,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: Some("dailies/_archive/YYYY".into()),
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
@@ -461,6 +492,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: Some("dailies/_archive/YYYY".into()),
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
@@ -486,6 +518,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: Some("dailies/_archive/YYYY/MM".into()),
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
@@ -511,6 +544,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         assert_eq!(cfg.archive, None);
@@ -548,6 +582,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: Some("dailies/_archive/YYYY".into()),
+            inbox: false,
         };
         let cfg = vault.daily_notes_config().unwrap();
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
@@ -595,6 +630,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let cfg = DailyNotesConfig {
             folder: "Daily".into(),

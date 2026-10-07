@@ -121,6 +121,9 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
     (undoing a defer restores both days; a tomorrow note created by the
     defer is deleted again).
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
+  - The *Inbox* cell left of the week strip shows `Inbox.md` in the vault
+    root (created on the first added todo). Right-click → *Move to today*
+    moves an inbox todo into today's daily note.
   - Search: `/`; open-only toggle; carry over; open in Obsidian. Carry over
     shows on today when a previous daily note still holds open todos — it
     uses the most recent such note within the last 30 days (weekend/vacation
