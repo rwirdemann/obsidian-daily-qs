@@ -161,11 +161,15 @@ pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultEr
 /// Resolve the path of `date`'s note: the live daily-notes folder wins, but a
 /// note manually moved into the archive folder configured via
 /// `--archive-folder` / the `archiveFolder` bar setting is still found.
+/// An inbox vault (`--inbox`) always resolves to the inbox note.
 fn resolved_note_path(
     vault: &Vault,
     config: &DailyNotesConfig,
     date: NaiveDate,
 ) -> Result<PathBuf, VaultError> {
+    if vault.inbox {
+        return vault.inbox_note_path();
+    }
     Ok(vault.daily_note_paths(config, date)?.resolved)
 }
 
@@ -252,6 +256,14 @@ fn enrich_snapshot(
     snap: &mut Snapshot,
 ) -> Result<(), VaultError> {
     snap.obsidian_uri = Some(open::open_uri(vault.root(), path));
+    if vault.inbox {
+        // The inbox has no date, carry-over source, or template.
+        snap.date = None;
+        snap.inbox = Some(true);
+        snap.is_today = Some(false);
+        snap.carry_over_count = Some(0);
+        return Ok(());
+    }
     let today = chrono::Local::now().date_naive();
     snap.is_today = Some(date == today);
     snap.carry_over_count = Some(carry_source_count(vault, config, date)?.unwrap_or(0));
@@ -276,6 +288,11 @@ fn carry_source(
     config: &DailyNotesConfig,
     date: NaiveDate,
 ) -> Result<Option<(NaiveDate, usize)>, VaultError> {
+    // Every "previous day" of the inbox is the inbox itself; carrying from it
+    // would move its open todos onto themselves and then delete them.
+    if vault.inbox {
+        return Ok(None);
+    }
     for offset in 1..=CARRY_OVER_LOOKBACK_DAYS {
         let Some(prev) = date.checked_sub_days(chrono::Days::new(offset)) else {
             break;
@@ -557,7 +574,11 @@ fn create_note_if_missing(
     if let Some(parent) = path.parent() {
         create_dir_all_in_vault(vault.root(), parent)?;
     }
-    let body = load_template_body(vault, config, date);
+    let body = if vault.inbox {
+        String::new()
+    } else {
+        load_template_body(vault, config, date)
+    };
     write_atomic(vault.root(), path, &body)?;
     Ok(true)
 }
@@ -578,7 +599,7 @@ pub fn ensure_note(
     // First access of a new day: pull the most recent previous open todos
     // into the fresh note and leave the source with only its done todos.
     // Plain note creation carries no rollover, so this cannot re-enter itself.
-    if created {
+    if created && !vault.inbox {
         move_open_from_previous(vault, date, heading)?;
     }
     Ok(created)
@@ -875,7 +896,8 @@ pub fn delete_todo(
     read_snapshot(vault, date)
 }
 
-/// Move a todo (and nested children) to the next calendar day.
+/// Move a todo (and nested children) to the next calendar day. From the
+/// inbox (`--inbox`) the todo moves to `date`'s daily note instead.
 ///
 /// Creates that note from the daily-note template when missing, without
 /// rolling over the rest of the source day's open todos. A single `undo`
@@ -911,9 +933,13 @@ pub fn defer_todo_to(
     if line == 0 {
         return Err(VaultError::Io("line must be >= 1".into()));
     }
-    let next_date = date
-        .checked_add_days(chrono::Days::new(1))
-        .ok_or_else(|| VaultError::Io("date overflow".into()))?;
+    let dest_vault = vault.daily();
+    let next_date = if vault.inbox {
+        date
+    } else {
+        date.checked_add_days(chrono::Days::new(1))
+            .ok_or_else(|| VaultError::Io("date overflow".into()))?
+    };
     let config = vault.daily_notes_config()?;
     let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
@@ -951,7 +977,7 @@ pub fn defer_todo_to(
         item.0 = item.0.saturating_sub(base_depth);
     }
 
-    let dest_path = resolved_note_path(vault, &config, next_date)?;
+    let dest_path = resolved_note_path(&dest_vault, &config, next_date)?;
     if dest_path == path {
         return Err(VaultError::Io("cannot defer onto the same note".into()));
     }
@@ -984,7 +1010,7 @@ pub fn defer_todo_to(
 
     // Create the destination from the template when missing (no carry-over:
     // deferring one todo must not pull the rest of today's list along).
-    if let Err(e) = create_note_if_missing(vault, &config, &dest_path, next_date) {
+    if let Err(e) = create_note_if_missing(&dest_vault, &config, &dest_path, next_date) {
         discard_record();
         return Err(e);
     }
@@ -993,7 +1019,7 @@ pub fn defer_todo_to(
     let dest_next = insert_todo_lines(
         &dest_content,
         &format_checkbox_lines(&moving),
-        infer_todo_style(vault, &config, next_date, &dest_content),
+        infer_todo_style(&dest_vault, &config, next_date, &dest_content),
         heading,
     );
     if let Err(e) = write_atomic(vault.root(), &dest_path, &dest_next) {
@@ -1137,6 +1163,8 @@ fn infer_todo_style(
     date: NaiveDate,
     current: &str,
 ) -> TodoStyle {
+    // Look back through daily notes even for the inbox, which has no history.
+    let vault = &vault.daily();
     let mut style = DEFAULT_TODO_STYLE;
     let mut compact_known = false;
     let mut heading_gap_known = false;
@@ -1736,6 +1764,7 @@ mod tests {
             Vault {
                 root,
                 archive: None,
+                inbox: false,
             },
             date,
             note,
@@ -2261,6 +2290,48 @@ mod tests {
     }
 
     #[test]
+    fn inbox_add_creates_plain_inbox_note() {
+        let (vault, date, note) = vault_with("- [ ] daily\n");
+        let inbox = vault.with_inbox(true);
+        let snap = add_todo(&inbox, date, "idea", None).unwrap();
+        let path = inbox.root().join(crate::config::INBOX_NOTE);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "- [ ] idea\n");
+        assert_eq!(snap.inbox, Some(true));
+        assert_eq!(snap.date, None);
+        assert_eq!(snap.open_count, Some(1));
+        assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] daily\n");
+        let _ = fs::remove_dir_all(inbox.root());
+    }
+
+    #[test]
+    fn inbox_never_carries_over_its_own_todos() {
+        let (vault, date, _) = vault_with("");
+        let inbox = vault.with_inbox(true);
+        let path = inbox.root().join(crate::config::INBOX_NOTE);
+        fs::write(&path, "- [ ] one\n- [ ] two\n").unwrap();
+        let snap = carry_over(&inbox, date, None).unwrap();
+        assert_eq!(snap.carry_over_count, Some(0));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "- [ ] one\n- [ ] two\n");
+        let _ = fs::remove_dir_all(inbox.root());
+    }
+
+    #[test]
+    fn inbox_defer_moves_todo_into_the_daily_note() {
+        let (vault, date, note) = vault_with("# Day\n\n## Tasks\n\n- [ ] existing\n");
+        let inbox = vault.with_inbox(true);
+        let path = inbox.root().join(crate::config::INBOX_NOTE);
+        fs::write(&path, "- [ ] keep\n- [ ] move me\n  - [ ] child\n").unwrap();
+        let snap = defer_todo(&inbox, date, 2, Some("move me"), true, None).unwrap();
+        assert_eq!(snap.inbox, Some(true));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "- [ ] keep\n");
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "# Day\n\n## Tasks\n\n- [ ] existing\n- [ ] move me\n  - [ ] child\n"
+        );
+        let _ = fs::remove_dir_all(inbox.root());
+    }
+
+    #[test]
     fn appends_when_no_tasks_heading() {
         let (vault, date, note) = vault_with("# Day\n\nhello\n");
         add_todo(&vault, date, "solo", None).unwrap();
@@ -2400,6 +2471,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         add_todo(&vault, date, "first", None).unwrap();
@@ -2430,6 +2502,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
 
@@ -2458,6 +2531,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
 
@@ -2613,6 +2687,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let snap = carry_over(&vault, date, None).unwrap();
@@ -2651,6 +2726,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // First write of the new day creates the note and rolls yesterday's
@@ -2735,6 +2811,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: Some("dailies/_archive/YYYY".into()),
+            inbox: false,
         };
         defer_todo(&vault, date, 1, Some("move me"), false, None).unwrap();
         assert!(
@@ -2807,6 +2884,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         add_todo(&vault, date, "brand new", None).unwrap();
@@ -2852,6 +2930,7 @@ mod tests {
         let vault = Vault {
             root: root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // Note creation must fail before any directory is created through
@@ -2953,6 +3032,7 @@ mod tests {
         let vault = Vault {
             root,
             archive: Some("dailies/_archive/YYYY".into()),
+            inbox: false,
         };
         (vault, archived)
     }

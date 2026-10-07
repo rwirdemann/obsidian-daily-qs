@@ -49,12 +49,12 @@ test("the private payload carries the vault and archive settings", () => {
 });
 
 test("every backend launch enables stdin, writes the payload and closes it", () => {
-  // actionProc / weekProc / watchProc, one `--stdin` each.
+  // actionProc / weekProc / inboxProc / watchProc, one `--stdin` each.
   const stdinFlags = src.match(/"--stdin"/g) || [];
   assert.equal(
     stdinFlags.length,
-    3,
-    `expected --stdin on the three launches (action, week, watch), found ${stdinFlags.length}`,
+    4,
+    `expected --stdin on the four launches (action, week, inbox, watch), found ${stdinFlags.length}`,
   );
 
   includes('var full = args.concat(["--stdin"])', "runAction must add --stdin itself");
@@ -68,6 +68,12 @@ test("every backend launch enables stdin, writes the payload and closes it", () 
   includes(
     "weekProc.write(root.pendingWeekStdin)",
     "the week payload must be written after start",
+  );
+
+  includes("inboxProc.stdinEnabled = true", "the inbox launch must open stdin");
+  includes(
+    "inboxProc.write(root.pendingInboxStdin)",
+    "the inbox payload must be written after start",
   );
 
   includes("watchProc.stdinEnabled = true", "the watch launch must open stdin");

@@ -42,6 +42,11 @@ struct Cli {
     #[arg(long, global = true)]
     stdin: bool,
 
+    /// Target the vault's Inbox.md instead of a daily note. `defer` then
+    /// moves the todo into the daily note for --date (default today)
+    #[arg(long, global = true)]
+    inbox: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -231,10 +236,12 @@ fn main() -> ExitCode {
         .archive_folder
         .clone()
         .or_else(|| stdin_fields.archive());
+    let inbox = cli.inbox;
     match cli.command {
         Command::Status { date, heading } => emit(run(
             vault_arg,
             archive_arg,
+            inbox,
             |vault, d| read_snapshot_filtered(vault, d, heading.as_deref()),
             date,
         )),
@@ -253,6 +260,7 @@ fn main() -> ExitCode {
             Ok(text) => run(
                 vault_arg,
                 archive_arg,
+                inbox,
                 |vault, d| add_todo_under(vault, d, &text, under_line, heading.as_deref()),
                 date,
             ),
@@ -266,6 +274,7 @@ fn main() -> ExitCode {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
+                inbox,
                 |vault, d| toggle_todo(vault, d, line, expect_text.as_deref()),
                 date,
             ),
@@ -280,6 +289,7 @@ fn main() -> ExitCode {
             Ok((text, expect_text)) => run(
                 vault_arg,
                 archive_arg,
+                inbox,
                 |vault, d| edit_todo(vault, d, line, expect_text.as_deref(), &text),
                 date,
             ),
@@ -294,6 +304,7 @@ fn main() -> ExitCode {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
+                inbox,
                 |vault, d| delete_todo(vault, d, line, expect_text.as_deref(), with_children),
                 date,
             ),
@@ -309,6 +320,7 @@ fn main() -> ExitCode {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
+                inbox,
                 |vault, d| {
                     defer_todo(
                         vault,
@@ -331,6 +343,7 @@ fn main() -> ExitCode {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
+                inbox,
                 |vault, d| set_indent(vault, d, line, expect_text.as_deref(), 1),
                 date,
             ),
@@ -344,13 +357,15 @@ fn main() -> ExitCode {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
+                inbox,
                 |vault, d| set_indent(vault, d, line, expect_text.as_deref(), -1),
                 date,
             ),
             Err(err) => Snapshot::error_with_code(err, "io"),
         }),
         Command::Undo => emit(match Vault::resolve(vault_arg, archive_arg) {
-            Ok(vault) => match undo_last(&vault) {
+            // With --inbox, the returned snapshot shows the inbox.
+            Ok(vault) => match undo_last(&vault.with_inbox(inbox)) {
                 Ok(snap) => snap,
                 Err(err) => Snapshot::error_with_code(err.to_string(), err.error_code()),
             },
@@ -372,10 +387,11 @@ fn main() -> ExitCode {
         Command::CarryOver { date, heading } => emit(run(
             vault_arg,
             archive_arg,
+            inbox,
             |vault, d| carry_over(vault, d, heading.as_deref()),
             date,
         )),
-        Command::Open { date } => emit(run(vault_arg, archive_arg, open_in_obsidian, date)),
+        Command::Open { date } => emit(run(vault_arg, archive_arg, inbox, open_in_obsidian, date)),
     }
 }
 
@@ -531,6 +547,7 @@ fn empty_to_none(value: Option<String>) -> Option<String> {
 fn run<F>(
     vault_arg: Option<PathBuf>,
     archive_arg: Option<String>,
+    inbox: bool,
     f: F,
     date: Option<String>,
 ) -> Snapshot
@@ -539,7 +556,7 @@ where
 {
     match Vault::resolve(vault_arg, archive_arg) {
         Ok(vault) => match parse_date(date) {
-            Ok(d) => match f(&vault, d) {
+            Ok(d) => match f(&vault.with_inbox(inbox), d) {
                 Ok(snap) => snap,
                 Err(err) => Snapshot::error_with_code(err.to_string(), err.error_code()),
             },

@@ -391,6 +391,7 @@ mod tests {
         let vault = Vault {
             root: vault_root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let note_path = vault_root.join("2026-08-20.md");
@@ -432,6 +433,7 @@ mod tests {
         let vault = Vault {
             root: vault_root.clone(),
             archive: None,
+            inbox: false,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let note_path = vault_root.join("2026-08-20.md");
@@ -470,6 +472,7 @@ mod tests {
             Vault {
                 root,
                 archive: None,
+                inbox: false,
             },
             date,
         )
@@ -579,6 +582,7 @@ mod tests {
         let vault = Vault {
             root: vault_root.clone(),
             archive: None,
+            inbox: false,
         };
         undo_last_from(&vault, &undo_file).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] original\n");

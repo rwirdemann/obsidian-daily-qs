@@ -50,6 +50,7 @@ BarWidget {
   // path for the whole session (AGENTS.md, #102).
   property string pendingActionStdin: ""
   property string pendingWeekStdin: ""
+  property string pendingInboxStdin: ""
   property string pendingWatchStdin: ""
 
   readonly property string watchBinary: {
@@ -101,6 +102,12 @@ BarWidget {
   // change handler always fires.
   property int viewFailureSeq: 0
   property var weekDays: []
+  // Panel shows the vault's Inbox.md instead of a daily note. viewDate is
+  // kept so the week strip stays put and leaving the inbox returns to it.
+  property bool viewInbox: false
+  property int inboxOpenCount: 0
+  property int inboxDoneCount: 0
+  property bool inboxExists: false
 
   readonly property string homeDir: Quickshell.env("HOME") || ""
   readonly property string vaultPathSetting: String(setting("vaultPath", "") || "")
@@ -168,6 +175,12 @@ BarWidget {
     return args
   }
 
+  // Which note a panel action targets: the inbox or the viewed day.
+  function targetArgs() {
+    if (root.viewInbox) return ["--inbox"]
+    return ["--date", root.viewDate || Model.todayIso()]
+  }
+
   function restartWatch() {
     // Only mark it deliberate when an exit will actually follow. If the watch
     // is already stopped, nothing consumes the flag and a later real crash
@@ -222,7 +235,7 @@ BarWidget {
     root.carryOverCount = parsed.carryOverCount || 0
     root.isToday = parsed.isToday === true
     root.templateName = parsed.templateName || ""
-    if (root.viewDate === "" || root.viewDate === parsed.date)
+    if (!root.viewInbox && (root.viewDate === "" || root.viewDate === parsed.date))
       root.applyViewParsed(parsed)
   }
 
@@ -244,6 +257,8 @@ BarWidget {
 
   function applyViewLine(line) {
     var parsed = Model.parseLine(String(line || ""))
+    if (parsed && parsed.state === "ok" && parsed.inbox !== root.viewInbox)
+      return
     if (parsed && parsed.date && root.viewDate !== "" && parsed.date !== root.viewDate)
       return
     root.applyViewParsed(parsed)
@@ -283,7 +298,9 @@ BarWidget {
   function refreshView() {
     var d = root.viewDate || Model.todayIso()
     root.viewDate = d
-    root.runAction(["status", "--date", d].concat(root.headingArgs()), null)
+    // todoHeading filters daily notes; the inbox always shows every todo.
+    var filter = root.viewInbox ? [] : root.headingArgs()
+    root.runAction(["status"].concat(root.targetArgs(), filter), null)
     root.refreshWeek()
   }
 
@@ -297,16 +314,22 @@ BarWidget {
     weekProc.command = [root.actionBinary].concat(
       ["week", "--date", d].concat(root.headingArgs()).concat(["--stdin"]))
     weekProc.running = true
+    root.pendingInboxStdin = root.privatePayload(null)
+    inboxProc.stdinEnabled = true
+    inboxProc.command = [root.actionBinary, "status", "--inbox", "--stdin"]
+    inboxProc.running = true
   }
 
   function shiftView(delta) {
     var next = Model.shiftDate(root.viewDate || Model.todayIso(), delta)
     if (next === "") return
+    root.viewInbox = false
     root.viewDate = next
     root.refreshView()
   }
 
   function goToday() {
+    root.viewInbox = false
     root.viewDate = Model.todayIso()
     root.refreshView()
   }
@@ -314,15 +337,22 @@ BarWidget {
   function goToDate(dateStr) {
     var d = String(dateStr || "")
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return
+    root.viewInbox = false
     root.viewDate = d
+    root.refreshView()
+  }
+
+  function goToInbox() {
+    root.viewInbox = true
     root.refreshView()
   }
 
   function addTodo(text, underLine) {
     var trimmed = String(text || "").trim()
     if (trimmed === "") return
-    var d = root.viewDate || Model.todayIso()
-    var args = ["add", "--date", d].concat(root.insertHeadingArgs())
+    // insertHeading names a daily-note section; the inbox appends plainly.
+    var placement = root.viewInbox ? [] : root.insertHeadingArgs()
+    var args = ["add"].concat(root.targetArgs(), placement)
     var n = Number(underLine)
     if (isFinite(n) && n >= 1)
       args.push("--under-line", String(Math.floor(n)))
@@ -332,8 +362,7 @@ BarWidget {
   function toggleTodo(line, text) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
-    var d = root.viewDate || Model.todayIso()
-    var args = ["toggle", "--date", d, "--line", String(Math.floor(n))]
+    var args = ["toggle"].concat(root.targetArgs(), ["--line", String(Math.floor(n))])
     var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
     root.runAction(args, fields)
   }
@@ -343,8 +372,7 @@ BarWidget {
     if (!isFinite(n) || n < 1) return
     var trimmed = String(newText || "").trim()
     if (trimmed === "") return
-    var d = root.viewDate || Model.todayIso()
-    var args = ["edit", "--date", d, "--line", String(Math.floor(n))]
+    var args = ["edit"].concat(root.targetArgs(), ["--line", String(Math.floor(n))])
     var fields = { text: trimmed }
     if (typeof expectText === "string" && expectText !== "")
       fields.expectText = expectText
@@ -354,8 +382,7 @@ BarWidget {
   function deleteTodo(line, text, withChildren) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
-    var d = root.viewDate || Model.todayIso()
-    var args = ["delete", "--date", d, "--line", String(Math.floor(n))]
+    var args = ["delete"].concat(root.targetArgs(), ["--line", String(Math.floor(n))])
     var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
     if (withChildren === true)
       args.push("--with-children")
@@ -365,8 +392,8 @@ BarWidget {
   function deferTodo(line, text, withChildren) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
-    var d = root.viewDate || Model.todayIso()
-    var args = ["defer", "--date", d, "--line", String(Math.floor(n))].concat(root.insertHeadingArgs())
+    // From the inbox, defer moves the todo into today's daily note.
+    var args = ["defer"].concat(root.targetArgs(), ["--line", String(Math.floor(n))], root.insertHeadingArgs())
     var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
     if (withChildren === true)
       args.push("--with-children")
@@ -376,25 +403,24 @@ BarWidget {
   function indentTodo(line, text, delta) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
-    var d = root.viewDate || Model.todayIso()
     var cmd = Number(delta) < 0 ? "outdent" : "indent"
-    var args = [cmd, "--date", d, "--line", String(Math.floor(n))]
+    var args = [cmd].concat(root.targetArgs(), ["--line", String(Math.floor(n))])
     var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
     root.runAction(args, fields)
   }
 
   function undoLast() {
-    root.runAction(["undo"], null)
+    root.runAction(["undo"].concat(root.viewInbox ? ["--inbox"] : []), null)
   }
 
   function carryOver() {
+    if (root.viewInbox) return
     var d = root.viewDate || Model.todayIso()
     root.runAction(["carry-over", "--date", d].concat(root.insertHeadingArgs()), null)
   }
 
   function openInObsidian() {
-    var d = root.viewDate || Model.todayIso()
-    root.runAction(["open", "--date", d], null)
+    root.runAction(["open"].concat(root.targetArgs()), null)
   }
 
   function injectPanel() {
@@ -483,6 +509,24 @@ BarWidget {
       if (root.pendingWeekStdin !== "")
         weekProc.write(root.pendingWeekStdin)
       weekProc.stdinEnabled = false
+    }
+  }
+
+  Process {
+    id: inboxProc
+    stdout: SplitParser {
+      onRead: function(line) {
+        var parsed = Model.parseLine(String(line || ""))
+        if (!parsed || parsed.state !== "ok" || !parsed.inbox) return
+        root.inboxOpenCount = parsed.openCount
+        root.inboxDoneCount = parsed.doneCount
+        root.inboxExists = parsed.exists === true
+      }
+    }
+    onStarted: {
+      if (root.pendingInboxStdin !== "")
+        inboxProc.write(root.pendingInboxStdin)
+      inboxProc.stdinEnabled = false
     }
   }
 
