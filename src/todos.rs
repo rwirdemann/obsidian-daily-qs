@@ -306,15 +306,19 @@ fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, Vaul
 /// When `heading` names a markdown section (e.g. `Inbox`), carried items are
 /// inserted there; otherwise the default placement (Tasks/Todos, first list,
 /// after title) applies.
+///
+/// With `record_undo` false the target write leaves the undo slot alone, for
+/// callers that record their own undo right after (inbox defer).
 fn move_open_from_previous(
     vault: &Vault,
     date: NaiveDate,
     heading: Option<&str>,
+    record_undo: bool,
 ) -> Result<usize, VaultError> {
     // Create the target note up front without rolling over: otherwise
-    // add_todo_lines's ensure_note would create it here and re-enter this
+    // add_checkbox_lines's ensure_note would create it here and re-enter this
     // function. That nested run finished completely (appending the items and
-    // emptying the source note) before the outer add_todo_lines appended
+    // emptying the source note) before the outer add_checkbox_lines appended
     // the same lines again — duplicating every carried todo.
     let config = vault.daily_notes_config()?;
     let path = resolved_note_path(vault, &config, date)?;
@@ -341,7 +345,12 @@ fn move_open_from_previous(
         .map(|item| (item.depth, item.text))
         .collect();
     if !to_move.is_empty() {
-        add_todo_lines(vault, date, &to_move, heading)?;
+        let formatted: Vec<(usize, bool, String)> = to_move
+            .iter()
+            .map(|(depth, text)| (*depth, false, text.clone()))
+            .collect();
+        // The note exists already, so `rollover` only decides the undo record.
+        add_checkbox_lines(vault, date, &formatted, record_undo, heading)?;
     }
     // Reconcile against the target's current open todos instead of only the
     // lines added above: if an earlier run added to the target but failed
@@ -403,7 +412,10 @@ pub fn carry_over(
     date: NaiveDate,
     heading: Option<&str>,
 ) -> Result<Snapshot, VaultError> {
-    move_open_from_previous(vault, date, heading)?;
+    // The inbox has no previous day; don't create an empty Inbox.md either.
+    if !vault.inbox {
+        move_open_from_previous(vault, date, heading, true)?;
+    }
     read_snapshot(vault, date)
 }
 
@@ -468,7 +480,7 @@ pub fn ensure_note(
     // into the fresh note and leave the source with only its done todos.
     // Plain note creation carries no rollover, so this cannot re-enter itself.
     if created && !vault.inbox {
-        move_open_from_previous(vault, date, heading)?;
+        move_open_from_previous(vault, date, heading, true)?;
     }
     Ok(created)
 }
@@ -871,13 +883,18 @@ pub fn defer_todo_to(
     if dest_path == path {
         return Err(VaultError::Io("cannot defer onto the same note".into()));
     }
-    // From the inbox the destination is today's note. If this creates it,
-    // roll the previous day's open todos over first, as the first `add` of
-    // the day would; otherwise the rollover never runs for today. This
+    // From the inbox the destination is normally today's note. If this
+    // creates it, roll the previous day's open todos over first, as the first
+    // `add` of the day would; otherwise the rollover never runs for today.
+    // Other dates (`--date`) get no rollover, like a plain defer. This
     // happens before the undo record so undo only reverts the move and never
-    // deletes a note holding todos already removed from the previous day.
-    if vault.inbox {
-        ensure_note(&dest_vault, &config, &dest_path, next_date, heading)?;
+    // deletes a note holding todos already removed from the previous day; it
+    // records no undo of its own, so `undo_dest` stays the only undo target.
+    if vault.inbox
+        && next_date == chrono::Local::now().date_naive()
+        && create_note_if_missing(&dest_vault, &config, &dest_path, next_date)?
+    {
+        move_open_from_previous(&dest_vault, next_date, heading, false)?;
     }
     let dest_existed = dest_path.exists();
     let dest_before: Option<String> =
@@ -1951,7 +1968,10 @@ mod tests {
         let inbox = vault.with_inbox(true);
         let path = inbox.root().join(crate::config::INBOX_NOTE);
         fs::write(&path, "- [ ] keep\n- [ ] move me\n  - [ ] child\n").unwrap();
-        let snap = defer_todo(&inbox, date, 2, Some("move me"), true, None).unwrap();
+        let undo = unique_temp("inbox-defer-move-undo");
+        let snap =
+            defer_todo_to(&inbox, date, 2, Some("move me"), true, None, Some(&undo)).unwrap();
+        let _ = fs::remove_file(&undo);
         assert_eq!(snap.inbox, Some(true));
         assert_eq!(fs::read_to_string(&path).unwrap(), "- [ ] keep\n");
         assert_eq!(
@@ -1963,18 +1983,27 @@ mod tests {
 
     #[test]
     fn inbox_defer_into_new_today_note_rolls_over_previous_day() {
-        let (vault, date, note) = vault_with("");
+        // The rollover only runs for today's note, so use the real date.
+        let (vault, _, note) = vault_with("");
         fs::remove_file(&note).unwrap();
-        let yesterday = vault.root().join("Daily/2026-08-19.md");
+        let today = chrono::Local::now().date_naive();
+        let yesterday_date = today.checked_sub_days(chrono::Days::new(1)).unwrap();
+        let today_note = vault
+            .root()
+            .join(format!("Daily/{}.md", today.format("%Y-%m-%d")));
+        let yesterday = vault
+            .root()
+            .join(format!("Daily/{}.md", yesterday_date.format("%Y-%m-%d")));
         fs::write(&yesterday, "- [ ] leftover\n- [x] finished\n").unwrap();
         let inbox = vault.with_inbox(true);
         let path = inbox.root().join(crate::config::INBOX_NOTE);
         fs::write(&path, "- [ ] idea\n").unwrap();
         let undo = unique_temp("inbox-defer-undo");
-        defer_todo_to(&inbox, date, 1, Some("idea"), false, None, Some(&undo)).unwrap();
+        defer_todo_to(&inbox, today, 1, Some("idea"), false, None, Some(&undo)).unwrap();
+        let title = format!("# {}\n", today.format("%Y-%m-%d"));
         assert_eq!(
-            fs::read_to_string(&note).unwrap(),
-            "# 2026-08-20\n- [ ] leftover\n- [ ] idea\n"
+            fs::read_to_string(&today_note).unwrap(),
+            format!("{title}- [ ] leftover\n- [ ] idea\n")
         );
         assert_eq!(fs::read_to_string(&yesterday).unwrap(), "- [x] finished\n");
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
@@ -1983,10 +2012,41 @@ mod tests {
         crate::undo::undo_last_from(&inbox, &undo).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "- [ ] idea\n");
         assert_eq!(
-            fs::read_to_string(&note).unwrap(),
-            "# 2026-08-20\n- [ ] leftover\n"
+            fs::read_to_string(&today_note).unwrap(),
+            format!("{title}- [ ] leftover\n")
         );
         let _ = fs::remove_file(&undo);
+        let _ = fs::remove_dir_all(inbox.root());
+    }
+
+    #[test]
+    fn inbox_defer_into_new_past_note_does_not_roll_over() {
+        let (vault, date, note) = vault_with("");
+        fs::remove_file(&note).unwrap();
+        let older = vault.root().join("Daily/2026-08-19.md");
+        fs::write(&older, "- [ ] leftover\n").unwrap();
+        let inbox = vault.with_inbox(true);
+        let path = inbox.root().join(crate::config::INBOX_NOTE);
+        fs::write(&path, "- [ ] idea\n").unwrap();
+        let undo = unique_temp("inbox-defer-past-undo");
+        defer_todo_to(&inbox, date, 1, Some("idea"), false, None, Some(&undo)).unwrap();
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "# 2026-08-20\n- [ ] idea\n"
+        );
+        assert_eq!(fs::read_to_string(&older).unwrap(), "- [ ] leftover\n");
+        let _ = fs::remove_file(&undo);
+        let _ = fs::remove_dir_all(inbox.root());
+    }
+
+    #[test]
+    fn inbox_carry_over_does_not_create_inbox_note() {
+        let (vault, date, _) = vault_with("");
+        let inbox = vault.with_inbox(true);
+        let path = inbox.root().join(crate::config::INBOX_NOTE);
+        let snap = carry_over(&inbox, date, None).unwrap();
+        assert_eq!(snap.exists, Some(false));
+        assert!(!path.exists());
         let _ = fs::remove_dir_all(inbox.root());
     }
 

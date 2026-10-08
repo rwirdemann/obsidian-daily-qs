@@ -321,12 +321,16 @@ Panel {
     }
   }
 
-  onDateChanged: {
+  function resetViewState() {
     root.selectedIndex = -1
     root.cancelEdit()
     root.closeTodoMenu()
     if (panelFlick) panelFlick.contentY = 0
   }
+
+  // Entering or leaving the inbox keeps viewDate, so reset on both.
+  onDateChanged: root.resetViewState()
+  onInboxChanged: root.resetViewState()
 
   onOpenedChanged: {
     if (root.opened) {
@@ -502,11 +506,12 @@ Panel {
             spacing: Style.space(12)
             visible: !root.vaultSetupError
 
-            // Week strip: seven day cells with open-count dots.
+            // Week strip: seven day cells with open-count dots. Stays visible
+            // without week data so the inbox cell remains reachable.
             RowLayout {
               width: parent.width
               spacing: Style.space(4)
-              visible: root.weekDays.length > 0
+              visible: root.hasWatcher
 
               // Inbox cell: the vault's Inbox.md, left of the week.
               CursorSurface {

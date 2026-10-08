@@ -248,6 +248,10 @@ BarWidget {
     var parsed = Model.parseLine(String(line || ""))
     if (parsed && parsed.state === "ok" && parsed.inbox !== root.viewInbox)
       return
+    // Error snapshots carry no inbox flag; match them by the request instead.
+    if (parsed && parsed.state !== "ok"
+        && (root.pendingActionArgs.indexOf("--inbox") !== -1) !== root.viewInbox)
+      return
     if (parsed && parsed.date && root.viewDate !== "" && parsed.date !== root.viewDate)
       return
     root.applyViewParsed(parsed)
