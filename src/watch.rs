@@ -1,4 +1,5 @@
-//! Poll today's daily note and emit JSON snapshots when it changes.
+//! Poll today's daily note (and optionally the inbox note) and emit JSON
+//! snapshots when they change.
 
 use std::fs;
 use std::io::{self, Write};
@@ -15,19 +16,50 @@ use crate::todos::read_snapshot_filtered;
 const POLL: Duration = Duration::from_secs(1);
 
 /// Stream snapshots: one immediately, then whenever path/mtime/content changes.
-pub fn watch(cli_vault: Option<PathBuf>, cli_archive: Option<String>, heading: Option<String>) {
+/// With `with_inbox`, inbox snapshots (`"inbox": true`) are interleaved so
+/// external edits to the inbox note reach the widget too.
+pub fn watch(
+    cli_vault: Option<PathBuf>,
+    cli_archive: Option<String>,
+    heading: Option<String>,
+    with_inbox: bool,
+) {
     let mut last_key: Option<String> = None;
+    let mut last_inbox_key: Option<String> = None;
     loop {
         let snap = current_snapshot(cli_vault.clone(), cli_archive.clone(), heading.as_deref());
-        let key = snapshot_key(&snap);
-        if last_key.as_ref() != Some(&key) {
-            if !emit(&snap) {
-                return;
-            }
-            last_key = Some(key);
+        if !emit_if_changed(&snap, &mut last_key) {
+            return;
+        }
+        // Inbox errors are not streamed: they carry no inbox flag and would
+        // be taken for a today snapshot.
+        if with_inbox
+            && let Some(snap) = inbox_snapshot(cli_vault.clone(), cli_archive.clone())
+            && !emit_if_changed(&snap, &mut last_inbox_key)
+        {
+            return;
         }
         thread::sleep(POLL);
     }
+}
+
+/// Emit `snap` when its key differs from `last_key`; false once stdout is gone.
+fn emit_if_changed(snap: &Snapshot, last_key: &mut Option<String>) -> bool {
+    let key = snapshot_key(snap);
+    if last_key.as_ref() == Some(&key) {
+        return true;
+    }
+    if !emit(snap) {
+        return false;
+    }
+    *last_key = Some(key);
+    true
+}
+
+/// The inbox note's snapshot, or `None` when it cannot be read.
+fn inbox_snapshot(cli_vault: Option<PathBuf>, cli_archive: Option<String>) -> Option<Snapshot> {
+    let vault = Vault::resolve(cli_vault, cli_archive).ok()?.with_inbox(true);
+    read_snapshot_filtered(&vault, Local::now().date_naive(), None).ok()
 }
 
 pub fn current_snapshot(

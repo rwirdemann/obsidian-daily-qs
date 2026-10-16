@@ -224,6 +224,14 @@ BarWidget {
   function applyTodayLine(line) {
     var parsed = Model.parseLine(String(line || ""))
     if (!parsed) return
+    // `watch --with-inbox` interleaves inbox snapshots with today's.
+    if (parsed.inbox) {
+      root.applyInboxParsed(parsed)
+      // An in-flight action replies with its own, newer snapshot.
+      if (root.viewInbox && !actionProc.running)
+        root.applyViewParsed(parsed)
+      return
+    }
     root.statusState = parsed.state
     root.date = parsed.date
     root.exists = parsed.exists === true
@@ -237,6 +245,13 @@ BarWidget {
     root.templateName = parsed.templateName || ""
     if (!root.viewInbox && (root.viewDate === "" || root.viewDate === parsed.date))
       root.applyViewParsed(parsed)
+  }
+
+  function applyInboxParsed(parsed) {
+    if (!parsed || parsed.state !== "ok" || !parsed.inbox) return
+    root.inboxOpenCount = parsed.openCount
+    root.inboxDoneCount = parsed.doneCount
+    root.inboxExists = parsed.exists === true
   }
 
   function applyViewParsed(parsed) {
@@ -314,14 +329,31 @@ BarWidget {
     // checkboxes the panel (correctly) hides and contradicts the day counts
     // right next to it (#62).
     root.pendingWeekStdin = root.privatePayload(null)
-    weekProc.stdinEnabled = true
-    weekProc.command = [root.actionBinary].concat(
-      ["week", "--date", d].concat(root.headingArgs()).concat(["--stdin"]))
-    weekProc.running = true
+    root.startRefresh(weekProc, [root.actionBinary].concat(
+      ["week", "--date", d].concat(root.headingArgs()).concat(["--stdin"])))
     root.pendingInboxStdin = root.privatePayload(null)
-    inboxProc.stdinEnabled = true
-    inboxProc.command = [root.actionBinary, "status", "--inbox", "--stdin"]
-    inboxProc.running = true
+    root.startRefresh(inboxProc, [root.actionBinary, "status", "--inbox", "--stdin"])
+  }
+
+  // Setting `running` on a running Process is a no-op, so a refresh requested
+  // mid-run is remembered and started once the current run exits. stdin is
+  // opened before every start; the process's onStarted writes its payload.
+  function startRefresh(proc, command) {
+    proc.command = command
+    if (proc.running) {
+      proc.rerun = true
+      return
+    }
+    proc.rerun = false
+    proc.stdinEnabled = true
+    proc.running = true
+  }
+
+  function finishRefresh(proc) {
+    if (proc.running || !proc.rerun) return
+    proc.rerun = false
+    proc.stdinEnabled = true
+    proc.running = true
   }
 
   function shiftView(delta) {
@@ -500,6 +532,8 @@ BarWidget {
 
   Process {
     id: weekProc
+    property bool rerun: false
+    onRunningChanged: root.finishRefresh(weekProc)
     stdout: SplitParser {
       onRead: function(line) {
         var parsed = Model.parseWeekLine(String(line || ""))
@@ -518,14 +552,10 @@ BarWidget {
 
   Process {
     id: inboxProc
+    property bool rerun: false
+    onRunningChanged: root.finishRefresh(inboxProc)
     stdout: SplitParser {
-      onRead: function(line) {
-        var parsed = Model.parseLine(String(line || ""))
-        if (!parsed || parsed.state !== "ok" || !parsed.inbox) return
-        root.inboxOpenCount = parsed.openCount
-        root.inboxDoneCount = parsed.doneCount
-        root.inboxExists = parsed.exists === true
-      }
+      onRead: function(line) { root.applyInboxParsed(Model.parseLine(String(line || ""))) }
     }
     onStarted: {
       if (root.pendingInboxStdin !== "")
@@ -630,7 +660,7 @@ BarWidget {
       root.pendingWatchStdin = root.privatePayload(null)
       watchProc.stdinEnabled = true
       watchProc.command = [root.watchBinary].concat(
-        ["watch"].concat(root.headingArgs()).concat(["--stdin"]))
+        ["watch", "--with-inbox"].concat(root.headingArgs()).concat(["--stdin"]))
       watchProc.running = true
     }
   }

@@ -64,13 +64,14 @@ test("every backend launch enables stdin, writes the payload and closes it", () 
     "the action payload must be written after start",
   );
 
-  includes("weekProc.stdinEnabled = true", "the week launch must open stdin");
+  // weekProc and inboxProc start (and re-run) through startRefresh /
+  // finishRefresh, which open stdin before every start.
+  includes("proc.stdinEnabled = true", "the week/inbox launches must open stdin");
   includes(
     "weekProc.write(root.pendingWeekStdin)",
     "the week payload must be written after start",
   );
 
-  includes("inboxProc.stdinEnabled = true", "the inbox launch must open stdin");
   includes(
     "inboxProc.write(root.pendingInboxStdin)",
     "the inbox payload must be written after start",

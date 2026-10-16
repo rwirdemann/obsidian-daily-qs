@@ -65,6 +65,9 @@ enum Command {
     Watch {
         #[arg(long)]
         heading: Option<String>,
+        /// Also stream snapshots of the inbox note when it changes
+        #[arg(long)]
+        with_inbox: bool,
     },
     /// Add an open checkbox todo
     Add {
@@ -245,8 +248,11 @@ fn main() -> ExitCode {
             |vault, d| read_snapshot_filtered(vault, d, heading.as_deref()),
             date,
         )),
-        Command::Watch { heading } => {
-            watch::watch(vault_arg, archive_arg, heading);
+        Command::Watch {
+            heading,
+            with_inbox,
+        } => {
+            watch::watch(vault_arg, archive_arg, heading, with_inbox);
             // The restart heuristic watches the child, not its status; a
             // long-running watch has no meaningful exit code to report.
             ExitCode::SUCCESS

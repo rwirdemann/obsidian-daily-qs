@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backend: global `--inbox` flag targets `Inbox.md` instead of a daily note;
   `defer --inbox` moves the todo into the daily note for `--date` (default
   today). Inbox snapshots carry `"inbox": true` and no `date`.
+- Backend: `watch --with-inbox` also streams inbox snapshots when `Inbox.md`
+  changes, so edits made in Obsidian refresh the Inbox cell and view.
 
 ## [1.13.1] - 2026-10-15
 

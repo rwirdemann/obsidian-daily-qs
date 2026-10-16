@@ -947,6 +947,32 @@ pub fn defer_todo_to(
     heading: Option<&str>,
     undo_dest: Option<&Path>,
 ) -> Result<Snapshot, VaultError> {
+    let today = chrono::Local::now().date_naive();
+    defer_todo_at(
+        vault,
+        date,
+        line,
+        expect_text,
+        with_children,
+        heading,
+        undo_dest,
+        today,
+    )
+}
+
+/// [`defer_todo_to`] with an explicit `today`, so tests do not depend on the
+/// wall clock (which can cross midnight mid-test).
+#[allow(clippy::too_many_arguments)]
+fn defer_todo_at(
+    vault: &Vault,
+    date: NaiveDate,
+    line: usize,
+    expect_text: Option<&str>,
+    with_children: bool,
+    heading: Option<&str>,
+    undo_dest: Option<&Path>,
+    today: NaiveDate,
+) -> Result<Snapshot, VaultError> {
     if line == 0 {
         return Err(VaultError::Io("line must be >= 1".into()));
     }
@@ -1006,7 +1032,7 @@ pub fn defer_todo_to(
     // deletes a note holding todos already removed from the previous day; it
     // records no undo of its own, so `undo_dest` stays the only undo target.
     if vault.inbox
-        && next_date == chrono::Local::now().date_naive()
+        && next_date == today
         && create_note_if_missing(&dest_vault, &config, &dest_path, next_date)?
     {
         move_open_from_previous(&dest_vault, next_date, heading, false)?;
@@ -2366,10 +2392,9 @@ mod tests {
 
     #[test]
     fn inbox_defer_into_new_today_note_rolls_over_previous_day() {
-        // The rollover only runs for today's note, so use the real date.
-        let (vault, _, note) = vault_with("");
+        // The rollover only runs for today's note; pass `today` explicitly.
+        let (vault, today, note) = vault_with("");
         fs::remove_file(&note).unwrap();
-        let today = chrono::Local::now().date_naive();
         let yesterday_date = today.checked_sub_days(chrono::Days::new(1)).unwrap();
         let today_note = vault
             .root()
@@ -2382,7 +2407,17 @@ mod tests {
         let path = inbox.root().join(crate::config::INBOX_NOTE);
         fs::write(&path, "- [ ] idea\n").unwrap();
         let undo = unique_temp("inbox-defer-undo");
-        defer_todo_to(&inbox, today, 1, Some("idea"), false, None, Some(&undo)).unwrap();
+        defer_todo_at(
+            &inbox,
+            today,
+            1,
+            Some("idea"),
+            false,
+            None,
+            Some(&undo),
+            today,
+        )
+        .unwrap();
         let title = format!("# {}\n", today.format("%Y-%m-%d"));
         assert_eq!(
             fs::read_to_string(&today_note).unwrap(),

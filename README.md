@@ -152,6 +152,7 @@ export OBSIDIAN_VAULT_ROOT="/path/to/vault"
 obsidian-daily-qs status
 obsidian-daily-qs status --date 2026-08-19 --heading Todos
 obsidian-daily-qs watch
+obsidian-daily-qs watch --with-inbox   # also stream Inbox.md snapshots
 obsidian-daily-qs add --text "Ship plugin"
 obsidian-daily-qs add --text "Inbox item" --heading Inbox
 obsidian-daily-qs add --text "Nested" --under-line 12
