@@ -58,7 +58,9 @@ fn emit_if_changed(snap: &Snapshot, last_key: &mut Option<String>) -> bool {
 
 /// The inbox note's snapshot, or `None` when it cannot be read.
 fn inbox_snapshot(cli_vault: Option<PathBuf>, cli_archive: Option<String>) -> Option<Snapshot> {
-    let vault = Vault::resolve(cli_vault, cli_archive).ok()?.with_inbox(true);
+    let vault = Vault::resolve(cli_vault, cli_archive)
+        .ok()?
+        .with_inbox(true);
     read_snapshot_filtered(&vault, Local::now().date_naive(), None).ok()
 }
 
