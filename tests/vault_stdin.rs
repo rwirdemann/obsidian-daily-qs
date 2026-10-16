@@ -177,10 +177,13 @@ fn a_mutation_takes_vault_and_text_from_one_payload() {
 #[test]
 fn watch_streams_with_the_vault_on_stdin() {
     let vault = temp_vault("watch");
+    // `watch` always reads today's note, so a fixed date fails from the next
+    // day on.
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     write_note(
         &vault,
-        "dailies/2026-10-15.md",
-        "# 2026-10-15\n\n## Todos\n- [ ] watched\n",
+        &format!("dailies/{today}.md"),
+        &format!("# {today}\n\n## Todos\n- [ ] watched\n"),
     );
 
     let mut child = Command::new(bin())
